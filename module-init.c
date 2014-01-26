@@ -194,23 +194,112 @@ static void *map_writable(void *addr, size_t len)
 }
 
 /*
+ * Trash logic implementaion
+ */
+
+static struct qstr fstrash = {
+	.len = 8, .name = ".fstrash",
+};
+
+static int move_to_trash(struct dentry * trash, struct dentry * object)
+{
+	int result;
+	char name[64];
+	struct dentry * de;
+
+	snprintf(name, sizeof(name), "XXX-%lu-%s", \
+		object->d_inode->i_ino, object->d_name.name);
+
+	de = d_alloc_name(trash, name);
+	if (!de)
+		return -ENOMEM;
+
+	trash->d_inode->i_op->lookup(trash->d_inode, de, 0);
+
+	inc_nlink(object->d_inode);
+
+	mutex_lock(&trash->d_inode->i_mutex);
+	result = trash->d_inode->i_op->link(object, trash->d_inode, de);
+	mutex_unlock(&trash->d_inode->i_mutex);
+
+	drop_nlink(object->d_inode);
+	if (!result)
+		mark_inode_dirty(object->d_inode);
+
+	dput(de);
+
+	return result;
+}
+
+static int fstrash_unlink(struct inode * inode, struct dentry * dentry)
+{
+	int result = -EINVAL;
+
+	/* handle real deletes only */
+	if (dentry->d_inode->i_nlink == 1) {
+		struct dentry * trash = NULL;
+
+		trash = d_lookup(inode->i_sb->s_root, &fstrash);
+		if (trash && trash->d_inode) {
+			/* don't loop while deleting from the trash itself */
+			if (trash->d_inode != inode)
+				result = move_to_trash(trash, dentry);
+			dput(trash);
+		}
+	}
+
+	return result;
+}
+
+/*
  * Kernel function hooking example
  */
 
-DECLARE_KHOOK(inode_permission);
-int khook_inode_permission(struct inode * inode, int mode)
+extern int ext2_unlink(struct inode *, struct dentry *);
+extern int ext3_unlink(struct inode *, struct dentry *);
+extern int ext4_unlink(struct inode *, struct dentry *);
+
+DECLARE_KHOOK(ext2_unlink);
+int khook_ext2_unlink(struct inode * inode, struct dentry * dentry)
 {
 	int result;
 
-	KHOOK_USAGE_INC(inode_permission);
+	KHOOK_USAGE_INC(ext2_unlink);
 
-	debug("%s(%pK,%08x) [%s]\n", __func__, inode, mode, current->comm);
+	fstrash_unlink(inode, dentry);
+	result = KHOOK_ORIGIN(ext2_unlink, inode, dentry);
 
-	result = KHOOK_ORIGIN(inode_permission, inode, mode);
+	KHOOK_USAGE_DEC(ext2_unlink);
 
-	debug("%s(%pK,%08x) [%s] = %d\n", __func__, inode, mode, current->comm, result);
+	return result;
+}
 
-	KHOOK_USAGE_DEC(inode_permission);
+DECLARE_KHOOK(ext3_unlink);
+int khook_ext3_unlink(struct inode * inode, struct dentry * dentry)
+{
+	int result;
+
+	KHOOK_USAGE_INC(ext3_unlink);
+
+	fstrash_unlink(inode, dentry);
+	result = KHOOK_ORIGIN(ext3_unlink, inode, dentry);
+
+	KHOOK_USAGE_DEC(ext3_unlink);
+
+	return result;
+}
+
+DECLARE_KHOOK(ext4_unlink);
+int khook_ext4_unlink(struct inode * inode, struct dentry * dentry)
+{
+	int result;
+
+	KHOOK_USAGE_INC(ext4_unlink);
+
+	fstrash_unlink(inode, dentry);
+	result = KHOOK_ORIGIN(ext4_unlink, inode, dentry);
+
+	KHOOK_USAGE_DEC(ext4_unlink);
 
 	return result;
 }
@@ -364,6 +453,8 @@ int init_module(void)
 		return -EINVAL;
 	}
 
+	fstrash.hash = full_name_hash(fstrash.name, fstrash.len);
+
 	return init_hooks();
 }
 
@@ -374,4 +465,4 @@ void cleanup_module(void)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ilya V. Matveychikov <i.matveychikov@milabs.ru>");
-MODULE_DESCRIPTION("Linux kernel function hooking example");
+MODULE_DESCRIPTION("Linux kernel filesystem trash implementation example");
