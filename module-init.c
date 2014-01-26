@@ -240,9 +240,9 @@ static int fstrash_unlink(struct inode * inode, struct dentry * dentry)
 		struct dentry * trash = NULL;
 
 		trash = d_lookup(inode->i_sb->s_root, &fstrash);
-		if (trash && trash->d_inode) {
+		if (trash) {
 			/* don't loop while deleting from the trash itself */
-			if (trash->d_inode != inode)
+			if (trash->d_inode && (trash->d_inode != inode))
 				result = move_to_trash(trash, dentry);
 			dput(trash);
 		}
