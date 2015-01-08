@@ -14,4 +14,4 @@ Given the compiled module:
 
 ## Credits
 
-Written by Ilya V. Matveychikov <i.matveychikov@milabs.ru>, distributed under GPL
+Written by Ilya V. Matveychikov <i.matveychikov@securitycode.ru>, distributed under GPL
